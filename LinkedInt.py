@@ -27,7 +27,6 @@ import math
 import urllib2
 import string
 from bs4 import BeautifulSoup
-from thready import threaded
 
 reload(sys)
 sys.setdefaultencoding('utf-8')
@@ -37,7 +36,7 @@ parser = argparse.ArgumentParser(description='Discovery LinkedIn')
 parser.add_argument('-u', '--keywords', help='Keywords to search')
 parser.add_argument('-o', '--output', help='Output file (do not include extentions)')
 args = parser.parse_args()
-api_key = "" # Hunter API key
+api_key = "XXX" # Hunter API key
 username = "" 	# enter username here
 password = ""	# enter password here
 
@@ -52,7 +51,7 @@ def login():
 	page = loadPage(opener, "https://www.linkedin.com/")
 	parse = BeautifulSoup(page, "html.parser")
 
-	csrf = parse.find(id="loginCsrfParam-login")['value']
+	csrf = parse.find("input", {"name": "loginCsrfParam"})['value']
 	
 	login_data = urllib.urlencode({'session_key': username, 'session_password': password, 'loginCsrfParam': csrf})
 	page = loadPage(opener,"https://www.linkedin.com/uas/login-submit", login_data)
@@ -83,10 +82,9 @@ def loadPage(client, url, data=None):
 	except:
 		sys.exit(0)
 
-def get_search():
-
+def write_results(_users):
     body = ""
-    csv = []
+    csv = ['"firstname","lastname","name","email","occupation","location"']
     css = """<style>
     #employees {
         font-family: "Trebuchet MS", Arial, Helvetica, sans-serif;
@@ -123,6 +121,135 @@ def get_search():
              <th>Location</th>
              </tr>
              """
+
+    for p, user in _users.iteritems():
+        data_industry = user['industry']   
+        data_firstname = user['firstName']
+        data_lastname = user['lastName']
+        data_slug = user['data_slug']
+        data_occupation = user['occupation']
+        data_location = user['location']
+        data_picture = user['picture']
+
+        # incase the last name is multi part, we will split it down
+        parts = data_lastname.split()
+
+        name = data_firstname + " " + data_lastname
+        fname = ""
+        mname = ""
+        lname = ""
+
+        if len(parts) == 1:
+            fname = data_firstname
+            mname = '?'
+            lname = parts[0]
+        elif len(parts) == 2:
+            fname = data_firstname
+            mname = parts[0]
+            lname = parts[1]
+        elif len(parts) >= 3:
+            fname = data_firstname
+            lname = parts[0]
+        else:
+            fname = data_firstname
+            lname = '?'
+
+        fname = re.sub('[^A-Za-z]+', '', fname)
+        mname = re.sub('[^A-Za-z]+', '', mname)
+        lname = re.sub('[^A-Za-z]+', '', lname)
+
+        if len(fname) == 0 or len(lname) == 0:
+            # invalid user, let's move on, this person has a weird name
+            continue
+
+            #come here
+
+        if prefix == 'full':
+            user = '{}{}{}'.format(fname, mname, lname)
+        if prefix == 'firstlast':
+            user = '{}{}'.format(fname, lname)
+        if prefix == 'firstmlast':
+            user = '{}{}{}'.format(fname, mname[0], lname)
+        if prefix == 'flast':
+            user = '{}{}'.format(fname[0], lname)
+        if prefix == 'first.last':
+            user = '{}.{}'.format(fname, lname)
+        if prefix == 'fmlast':
+            user = '{}{}{}'.format(fname[0], mname[0], lname)
+        if prefix == 'lastfirst':
+            user = '{}{}'.format(lname, fname)
+
+        email = '{}@{}'.format(user, suffix)
+
+        body += "<tr>" \
+            "<td><a href=\"%s\"><img src=\"%s\" width=200 height=200></a></td>" \
+            "<td><a href=\"%s\">%s</a></td>" \
+            "<td>%s</td>" \
+            "<td>%s</td>" \
+            "<td>%s</td>" \
+            "<a>" % (data_slug, data_picture, data_slug, name, email, data_occupation, data_location)
+        if not validateEmail(suffix,email):
+            email = ""
+        csv.append('"%s","%s","%s","%s","%s", "%s"' % (data_firstname, data_lastname, name, email, data_occupation, data_location.replace(",",";")))
+        foot = "</table></center>"
+        f = open('{}.html'.format(outfile), 'wb')
+        f.write(css)
+        f.write(header)
+        f.write(body)
+        f.write(foot)
+        f.close()
+        f = open('{}.csv'.format(outfile), 'wb')
+        f.writelines('\n'.join(csv))
+        f.close()
+
+def get_user_connections_browsemapWithDistance(_publicIdentifier):
+    url = "https://www.linkedin.com/voyager/api/identity/profiles/%s/browsemapWithDistance" % _publicIdentifier
+    headers = {
+        'Csrf-Token':'ajax:0397788525211216808', 
+        'X-RestLi-Protocol-Version':'2.0.0', 
+        'accept':'application/vnd.linkedin.normalized+json+2.1', 
+        }
+    cookies['JSESSIONID'] = 'ajax:0397788525211216808'
+    #print url
+    r = requests.get(url, cookies=cookies, headers=headers) 
+    res = {}
+    if r.status_code == 200:
+        content = r.text.encode('UTF-8')
+        content = json.loads(content)
+        for c in content["included"]:
+            if c["$type"] == "com.linkedin.voyager.identity.shared.MiniProfile" and c["occupation"] and search.lower() in c["occupation"].lower():
+                data_publicIdentifier = c['publicIdentifier']
+                if not data_publicIdentifier in publicIdentifiers:
+                    publicIdentifiers.append(data_publicIdentifier)
+                    data_industry = ""
+                    data_firstname = c['firstName']
+                    data_lastname = c['lastName']
+                    data_slug =  "https://www.linkedin.com/in/%s" % data_publicIdentifier
+                    data_occupation = c['occupation']
+                    data_location = ""
+                    try:
+                        data_picture = "%s%s" % (c['picture']['rootUrl'], c['picture']['artifacts'][2]['fileIdentifyingUrlPathSegment'][0])
+                    except:
+                        print "[*] No picture found for %s %s, %s" % (data_firstname, data_lastname, data_occupation)
+                        data_picture = ""
+                    res[data_publicIdentifier] = {
+                            'firstName'     : data_firstname,
+                            'lastName'      : data_lastname,
+                            'data_slug'     : data_slug,
+                            'occupation'    : data_occupation,
+                            'picture'       : data_picture,
+                            'location'      : data_location,
+                            'industry'      : data_industry
+                            }
+                    if not (data_publicIdentifier in checked_publicIdentifiers or data_publicIdentifier in publicIdentifiers_to_check):
+                        #print data_publicIdentifier
+                        publicIdentifiers_to_check.append(data_publicIdentifier)
+    else:
+        print "[!] Cannot get %s connections" % _publicIdentifier
+    return res
+
+
+def get_search():
 
     # Do we want to automatically get the company ID?
 
@@ -193,6 +320,8 @@ def get_search():
     print "[*] Fetching %i Pages" % pages
     print
 
+    users = {}
+    headless_profile = 0
     for p in range(pages):
         # Request results for each page using the start offset
         if bCompany == False:
@@ -209,10 +338,11 @@ def get_search():
                 try:
                     data_industry = c['hitInfo']['com.linkedin.voyager.search.SearchProfile']['industry']
                 except:
-                    data_industry = ""    
+                    data_industry = ""
                 data_firstname = c['hitInfo']['com.linkedin.voyager.search.SearchProfile']['miniProfile']['firstName']
                 data_lastname = c['hitInfo']['com.linkedin.voyager.search.SearchProfile']['miniProfile']['lastName']
-                data_slug = "https://www.linkedin.com/in/%s" % c['hitInfo']['com.linkedin.voyager.search.SearchProfile']['miniProfile']['publicIdentifier']
+                data_publicIdentifier = c['hitInfo']['com.linkedin.voyager.search.SearchProfile']['miniProfile']['publicIdentifier']
+                data_slug = "https://www.linkedin.com/in/%s" % data_publicIdentifier
                 data_occupation = c['hitInfo']['com.linkedin.voyager.search.SearchProfile']['miniProfile']['occupation']
                 data_location = c['hitInfo']['com.linkedin.voyager.search.SearchProfile']['location']
                 try:
@@ -220,80 +350,36 @@ def get_search():
                 except:
                     print "[*] No picture found for %s %s, %s" % (data_firstname, data_lastname, data_occupation)
                     data_picture = ""
-
-                # incase the last name is multi part, we will split it down
-
-                parts = data_lastname.split()
-
-                name = data_firstname + " " + data_lastname
-                fname = ""
-                mname = ""
-                lname = ""
-
-                if len(parts) == 1:
-                    fname = data_firstname
-                    mname = '?'
-                    lname = parts[0]
-                elif len(parts) == 2:
-                    fname = data_firstname
-                    mname = parts[0]
-                    lname = parts[1]
-                elif len(parts) >= 3:
-                    fname = data_firstname
-                    lname = parts[0]
-                else:
-                    fname = data_firstname
-                    lname = '?'
-
-                fname = re.sub('[^A-Za-z]+', '', fname)
-                mname = re.sub('[^A-Za-z]+', '', mname)
-                lname = re.sub('[^A-Za-z]+', '', lname)
-
-                if len(fname) == 0 or len(lname) == 0:
-                    # invalid user, let's move on, this person has a weird name
-                    continue
-
-                    #come here
-
-                if prefix == 'full':
-                    user = '{}{}{}'.format(fname, mname, lname)
-                if prefix == 'firstlast':
-                    user = '{}{}'.format(fname, lname)
-                if prefix == 'firstmlast':
-                    user = '{}{}{}'.format(fname, mname[0], lname)
-                if prefix == 'flast':
-                    user = '{}{}'.format(fname[0], lname)
-                if prefix == 'first.last':
-                    user = '{}.{}'.format(fname, lname)
-                if prefix == 'fmlast':
-                    user = '{}{}{}'.format(fname[0], mname[0], lname)
-                if prefix == 'lastfirst':
-                	user = '{}{}'.format(lname, fname)
-
-                email = '{}@{}'.format(user, suffix)
-
-                body += "<tr>" \
-                    "<td><a href=\"%s\"><img src=\"%s\" width=200 height=200></a></td>" \
-                    "<td><a href=\"%s\">%s</a></td>" \
-                    "<td>%s</td>" \
-                    "<td>%s</td>" \
-                    "<td>%s</td>" \
-                    "<a>" % (data_slug, data_picture, data_slug, name, email, data_occupation, data_location)
-                if validateEmail(suffix,email):
-                    csv.append('"%s","%s","%s","%s","%s", "%s"' % (data_firstname, data_lastname, name, email, data_occupation, data_location.replace(",",";")))
-                foot = "</table></center>"
-                f = open('{}.html'.format(outfile), 'wb')
-                f.write(css)
-                f.write(header)
-                f.write(body)
-                f.write(foot)
-                f.close()
-                f = open('{}.csv'.format(outfile), 'wb')
-                f.writelines('\n'.join(csv))
-                f.close()
+                users[data_publicIdentifier] = {
+                        'firstName'     : data_firstname,
+                        'lastName'      : data_lastname,
+                        'data_slug'     : data_slug,
+                        'occupation'    : data_occupation,
+                        'location'      : data_location,
+                        'industry'      : data_industry,
+                        'picture'       : data_picture
+                        }
+                publicIdentifiers.append(data_publicIdentifier)
+                if not (data_publicIdentifier in checked_publicIdentifiers or data_publicIdentifier in publicIdentifiers_to_check):
+                    publicIdentifiers_to_check.append(data_publicIdentifier)
             else:
+                headless_profile += 1
                 print "[!] Headless profile found. Skipping"
         print
+    if headless_profile > 0:
+        while len(publicIdentifiers_to_check) > 0:
+            p = publicIdentifiers_to_check.pop()
+            try:
+                connections = get_user_connections_browsemapWithDistance(p)
+            except requests.exceptions.ConnectionError as e:
+                print "[!] Error: {}" % repr(e)
+                publicIdentifiers_to_check.append(p)
+            else:
+                users.update(connections)
+                checked_publicIdentifiers.append(p)
+                print "Number of users to check %i" % len(publicIdentifiers_to_check)
+
+    write_results(users)
 
 def validateEmail(domain,email):
     """
@@ -330,6 +416,7 @@ def validateEmail(domain,email):
     socket.setdefaulttimeout(10)
     server = smtplib.SMTP(timeout=10)
     server.set_debuglevel(0)
+    code = 0
     try:
         print " [*] Checking for valid email: " + str(email)
         server.connect(mxhost['Host'])
@@ -474,6 +561,9 @@ if __name__ == '__main__':
   
     
     # Initialize Scraping
+    publicIdentifiers = []
+    publicIdentifiers_to_check = []
+    checked_publicIdentifiers = []
     get_search()
 
     print "[+] Complete"
