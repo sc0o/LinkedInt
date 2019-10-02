@@ -26,6 +26,7 @@ import urllib
 import math
 import urllib2
 import string
+import unicodedata
 from bs4 import BeautifulSoup
 
 reload(sys)
@@ -43,6 +44,10 @@ password = ""	# enter password here
 if api_key == "" or username == "" or password == "":
         print "[!] Oops, you did not enter your api_key, username, or password in LinkedInt.py"
         sys.exit(0)
+
+def remove_accent(_str):
+    res = unicodedata.normalize('NFKD', _str).encode('ascii','ignore').decode('ascii')
+    return res.rstrip()
 
 def login():
 	cookie_filename = "cookies.txt"
@@ -179,6 +184,8 @@ def write_results(_users):
         if prefix == 'lastfirst':
             user = '{}{}'.format(lname, fname)
 
+        user = user.lower()
+        user = remove_accent(user)
         email = '{}@{}'.format(user, suffix)
 
         body += "<tr>" \
@@ -190,7 +197,7 @@ def write_results(_users):
             "<a>" % (data_slug, data_picture, data_slug, name, email, data_occupation, data_location)
         if not validateEmail(suffix,email):
             email = ""
-        csv.append('"%s","%s","%s","%s","%s", "%s"' % (data_firstname, data_lastname, name, email, data_occupation, data_location.replace(",",";")))
+        csv.append('"%s","%s","%s","%s","%s","%s"' % (data_firstname, data_lastname, name, email, data_occupation, data_location.replace(",",";")))
         foot = "</table></center>"
         f = open('{}.html'.format(outfile), 'wb')
         f.write(css)
